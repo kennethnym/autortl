@@ -1,4 +1,4 @@
-import { CallExpression, Expression } from "@babel/types"
+import { CallExpression } from "@babel/types"
 
 function* walkMethodChain(expr: CallExpression): Generator<CallExpression> {
 	let expression: CallExpression = expr

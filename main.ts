@@ -7,6 +7,7 @@ import {
 	File,
 	identifier,
 	importDeclaration,
+	importDefaultSpecifier,
 	importSpecifier,
 	program,
 	Statement,
@@ -14,8 +15,9 @@ import {
 } from "@babel/types"
 import generate from "@babel/generator"
 import { transform } from "./src/transformer/transformer"
-import { camelToPascal } from "./src/util/string-case"
+import { camelToPascal, pascalToCamel } from "./src/util/string-case"
 import { findReactComponentByName } from "./src/analyzer/jsx"
+import prettier from "prettier"
 
 async function main() {
 	const inputFile = process.argv[2]
@@ -48,6 +50,18 @@ async function main() {
 		throw new Error(`Cannot find test target ${targetComponentName}`)
 	}
 
+	const { code } = generate(
+		program(
+			[
+				...generateRtlImports(),
+				...transform(testFileAst.body, targetComponent),
+			],
+			testFileAst.directives,
+			testFileAst.sourceType,
+			testFileAst.interpreter,
+		),
+	)
+
 	console.log(
 		generate(
 			program(
@@ -61,6 +75,19 @@ async function main() {
 			),
 		).code,
 	)
+
+	const formattedCode = await formatCode(
+		code,
+		(await prettier.resolveConfigFile(fullTestFilePath)) ?? "",
+	)
+
+	await promises.writeFile(
+		path.join(
+			...fullTestFilePath.split(path.sep).slice(0, -1),
+			`${pascalToCamel(targetComponentName)}.component.rtl.test.tsx`,
+		),
+		formattedCode,
+	)
 }
 
 async function parseFile(path: string): Promise<ParseResult<File>> {
@@ -71,15 +98,42 @@ async function parseFile(path: string): Promise<ParseResult<File>> {
 	})
 }
 
+async function formatCode(
+	code: string,
+	formatConfigPath: string,
+): Promise<string> {
+	const config = await prettier.resolveConfig(formatConfigPath)
+	return prettier.format(code, config || {})
+}
+
 function generateRtlImports(): Statement[] {
+	const renderResultImport = importSpecifier(
+		identifier("RenderResult"),
+		identifier("RenderResult"),
+	)
+	renderResultImport.importKind = "type"
+
 	return [
 		importDeclaration(
 			[
 				importSpecifier(identifier("render"), identifier("render")),
 				importSpecifier(identifier("screen"), identifier("screen")),
+				renderResultImport,
 			],
 			stringLiteral("@testing-library/react"),
 		),
+		importDeclaration(
+			[importDefaultSpecifier(identifier("userEvent"))],
+			stringLiteral("@testing-library/user-event"),
+		),
+		(() => {
+			const imp = importDeclaration(
+				[importSpecifier(identifier("UserEvent"), identifier("UserEvent"))],
+				stringLiteral("@testing-library/user-event/setup/setup"),
+			)
+			imp.importKind = "type"
+			return imp
+		})(),
 	]
 }
 

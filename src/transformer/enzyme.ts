@@ -5,7 +5,9 @@ import {
 	Expression,
 	expressionStatement,
 	ExpressionStatement,
+	Identifier,
 	identifier,
+	MemberExpression,
 	memberExpression,
 	objectExpression,
 	objectProperty,
@@ -31,33 +33,8 @@ function transformEnzymeSimulate(
 	const wrapperFind = findEnzymeFind(callExpr)
 	if (!wrapperFind) return [statement]
 
-	const selector = wrapperFind.arguments[0]
-	if (selector.type !== "StringLiteral") return [statement]
-
-	const ariaLabel = ariaLabelFromSelector(selector.value)
-	if (!ariaLabel) return [statement]
-
-	// attempt to find the component by aria-label
-	const selectedComponent = findByLabelText(ariaLabel, testTarget.jsx)
-
-	const rtlQuery = selectedComponent
-		? awaitExpression(
-				callExpression(
-					memberExpression(identifier("screen"), identifier("findByRole")),
-					[
-						stringLiteral(selectedComponent.role),
-						objectExpression([
-							objectProperty(identifier("name"), stringLiteral(ariaLabel)),
-						]),
-					],
-				),
-		  )
-		: awaitExpression(
-				callExpression(
-					memberExpression(identifier("screen"), identifier("findByLabelText")),
-					[stringLiteral(ariaLabel)],
-				),
-		  )
+	const rtlQuery = transformEnzymeFind(wrapperFind, testTarget)
+	if (!rtlQuery) return [statement]
 
 	switch (simulatedAction.value) {
 		case "click":
@@ -79,4 +56,78 @@ function transformEnzymeSimulate(
 	}
 }
 
-export { ariaLabelFromSelector, transformEnzymeSimulate }
+function transformEnzymeFind(
+	findExpression: CallExpression,
+	testTarget: ReactComponentDefinition,
+): Expression | null {
+	if (
+		findExpression.callee.type !== "MemberExpression" ||
+		findExpression.callee.property.type !== "Identifier" ||
+		findExpression.callee.property.name !== "find"
+	) {
+		return null
+	}
+
+	const selector = findExpression.arguments[0]
+	if (!selector) return null
+
+	switch (selector.type) {
+		case "StringLiteral":
+			const ariaLabel = ariaLabelFromSelector(selector.value)
+			if (!ariaLabel) return null
+
+			const selectedComponent = findByLabelText(ariaLabel, testTarget.jsx)
+
+			return selectedComponent
+				? awaitExpression(
+						callExpression(
+							memberExpression(identifier("screen"), identifier("findByRole")),
+							[
+								stringLiteral(selectedComponent.role),
+								objectExpression([
+									objectProperty(identifier("name"), stringLiteral(ariaLabel)),
+								]),
+							],
+						),
+				  )
+				: awaitExpression(
+						callExpression(
+							memberExpression(
+								identifier("screen"),
+								identifier("findByLabelText"),
+							),
+							[stringLiteral(ariaLabel)],
+						),
+				  )
+
+		default:
+			return null
+	}
+}
+
+function transformWrapperCalls(
+	statement: ExpressionStatement,
+	testTarget: ReactComponentDefinition,
+): Statement[] {
+	const callExpression = statement.expression as CallExpression
+
+	const enzymeOperation = (
+		(callExpression.callee as MemberExpression).property as Identifier
+	).name
+
+	switch (enzymeOperation) {
+		case "update":
+			return []
+		case "simulate":
+			return transformEnzymeSimulate(statement, testTarget)
+		default:
+			return [statement]
+	}
+}
+
+export {
+	ariaLabelFromSelector,
+	transformEnzymeSimulate,
+	transformEnzymeFind,
+	transformWrapperCalls,
+}

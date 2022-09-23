@@ -13,11 +13,29 @@ import {
 	returnStatement,
 	ReturnStatement,
 	Statement,
+	tSTypeAnnotation,
+	tsTypeAnnotation,
+	tSTypeReference,
+	tsTypeReference,
+	variableDeclaration,
+	variableDeclarator,
 } from "@babel/types"
 import { extractArrowFunctionDeclaration } from "../analyzer/ast"
 import { extractTestCase } from "../analyzer/jest"
 import { transformTestCase } from "./test-case"
 import { ReactComponentDefinition } from "../analyzer/jsx"
+
+const letUserEvent = variableDeclaration("let", [
+	variableDeclarator(
+		(() => {
+			const id = identifier("user")
+			id.typeAnnotation = tSTypeAnnotation(
+				tSTypeReference(identifier("UserEvent")),
+			)
+			return id
+		})(),
+	),
+])
 
 function transformTestSuite(
 	testSuite: ExpressionStatement,
@@ -36,7 +54,8 @@ function transformTestSuite(
 						statements.push(
 							generateRenderComponentFunction(arrowFunction.expression),
 						)
-						break
+						return statements
+
 					case "createRTLWrapper":
 						return statements
 				}
@@ -45,11 +64,13 @@ function transformTestSuite(
 			const testCase = extractTestCase(statement)
 			if (testCase) {
 				statements.push(transformTestCase(testCase.statement, testTarget))
+				return statements
 			}
 
+			statements.push(statement)
 			return statements
 		},
-		[],
+		[letUserEvent],
 	)
 
 	return expressionStatement(
@@ -78,7 +99,7 @@ function generateRenderComponentFunction(
 
 	const jsx = returnValue.arguments[0]
 
-	return functionDeclaration(
+	const func = functionDeclaration(
 		identifier("renderComponent"),
 		enzymeWrapperFunc.params,
 		blockStatement([
@@ -86,6 +107,11 @@ function generateRenderComponentFunction(
 			returnStatement(callExpression(identifier("render"), [jsx])),
 		]),
 	)
+	func.returnType = tsTypeAnnotation(
+		tsTypeReference(identifier("RenderResult")),
+	)
+
+	return func
 }
 
 export { transformTestSuite }

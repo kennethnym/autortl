@@ -1,13 +1,20 @@
 import { Statement } from "@babel/types"
 import { transformTestSuite } from "./test-suite"
-import { ReactComponent, ReactComponentDefinition } from "../analyzer/jsx"
+import { ReactComponentDefinition } from "../analyzer/jsx"
 
 function transform(
 	statements: Statement[],
 	testTarget: ReactComponentDefinition,
 ): Statement[] {
-	return statements.map((statement) => {
+	return statements.flatMap((statement) => {
 		switch (statement.type) {
+			case "ImportDeclaration":
+				const source = statement.source
+				return source.value === "@testing-library/react" ||
+					source.value === "enzyme"
+					? []
+					: statement
+
 			case "ExpressionStatement":
 				const expression = statement.expression
 				if (
