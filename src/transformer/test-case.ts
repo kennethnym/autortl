@@ -12,6 +12,7 @@ import {
 	objectPattern,
 	objectProperty,
 	Statement,
+	stringLiteral,
 	variableDeclaration,
 	variableDeclarator,
 } from "@babel/types"
@@ -26,23 +27,24 @@ import {
 	analyzeCallExpression,
 	findMethodChainReference,
 } from "../analyzer/ast"
+import { TestCase } from "../analyzer/jest"
 
 function transformTestCase(
-	testCase: ExpressionStatement,
+	testCase: TestCase,
 	testTarget: ReactComponentDefinition,
 ): ExpressionStatement {
-	const expression = testCase.expression as CallExpression
+	const expression = testCase.statement.expression as CallExpression
 	const testBody = (expression.arguments[1] as ArrowFunctionExpression)
 		.body as BlockStatement
 
 	return expressionStatement(
 		callExpression(identifier("it"), [
-			(testCase.expression as CallExpression).arguments[0],
+			stringLiteral(testCase.testName),
 			arrowFunctionExpression(
 				[],
 				blockStatement(
 					testBody.body.flatMap((s) =>
-						transformTestCaseStatement(s, testTarget),
+						transformTestCaseStatement(testCase, s, testTarget),
 					),
 				),
 				true,
@@ -52,11 +54,78 @@ function transformTestCase(
 }
 
 function transformTestCaseStatement(
+	testCase: TestCase,
 	statement: Statement,
 	testTarget: ReactComponentDefinition,
 ): Statement[] {
 	switch (statement.type) {
 		case "VariableDeclaration":
+			const declaration = statement.declarations[0]
+			const assignedValue = declaration.init
+			if (
+				assignedValue?.type === "CallExpression" &&
+				assignedValue.callee.type === "Identifier"
+			) {
+				switch (assignedValue.callee.name) {
+					case "createWrapper":
+						return [
+							expressionStatement(
+								callExpression(
+									identifier("renderComponent"),
+									assignedValue.arguments,
+								),
+							),
+						]
+
+					case "createRTLWrapper":
+						return [
+							variableDeclaration("const", [
+								variableDeclarator(
+									objectPattern([
+										objectProperty(
+											identifier("asFragment"),
+											identifier("asFragment"),
+											false,
+											true,
+										),
+									]),
+									callExpression(
+										identifier("renderComponent"),
+										assignedValue.arguments,
+									),
+								),
+							]),
+						]
+
+					case "shallow":
+						if (testCase.testName === "renders correctly") {
+							return [
+								variableDeclaration("const", [
+									variableDeclarator(
+										objectPattern([
+											objectProperty(
+												identifier("asFragment"),
+												identifier("asFragment"),
+												false,
+												true,
+											),
+										]),
+										callExpression(
+											identifier("render"),
+											assignedValue.arguments,
+										),
+									),
+								]),
+							]
+						}
+
+						return [
+							expressionStatement(
+								callExpression(identifier("render"), assignedValue.arguments),
+							),
+						]
+				}
+			}
 			const createWrapperCall = findCreateWrapperCall(statement)
 			if (createWrapperCall) {
 				return [
@@ -90,6 +159,7 @@ function transformTestCaseStatement(
 					]),
 				]
 			}
+
 			return [statement]
 
 		case "ExpressionStatement":
@@ -101,7 +171,7 @@ function transformTestCaseStatement(
 					return transformWrapperCalls(statement, testTarget)
 
 				case "expect":
-					return transformExpectCall(statement, testTarget)
+					return transformExpectCall(testCase, statement, testTarget)
 			}
 
 			return callee?.name === "wrapper"
@@ -114,6 +184,7 @@ function transformTestCaseStatement(
 }
 
 function transformExpectCall(
+	testCase: TestCase,
 	statement: ExpressionStatement,
 	testTarget: ReactComponentDefinition,
 ): Statement[] {
@@ -167,23 +238,47 @@ function transformExpectCall(
 			break
 
 		case "MemberExpression":
+			switch (expectValue.property.type) {
+				case "Identifier":
+					switch (expectValue.property.name) {
+						case "disabled":
+							if (expectValue.object.type === "CallExpression") {
+								const wrapperFind = findEnzymeFind(expectValue.object)
+								if (!wrapperFind) return [statement]
+
+								const rtlQuery = transformEnzymeFind(wrapperFind, testTarget)
+								if (!rtlQuery) return [statement]
+
+								transformedStatements.push(
+									expressionStatement(
+										callExpression(
+											memberExpression(
+												callExpression(identifier("expect"), [rtlQuery]),
+												identifier("toBeDisabled"),
+											),
+											[],
+										),
+									),
+								)
+							}
+							break
+					}
+			}
+			break
+
+		case "Identifier":
 			if (
-				expectValue.property.type === "Identifier" &&
-				expectValue.property.name === "disabled" &&
-				expectValue.object.type === "CallExpression"
+				expectValue.name === "wrapper" &&
+				callExpressionInfo.methods.has("toMatchSnapshot")
 			) {
-				const wrapperFind = findEnzymeFind(expectValue.object)
-				if (!wrapperFind) return [statement]
-
-				const rtlQuery = transformEnzymeFind(wrapperFind, testTarget)
-				if (!rtlQuery) return [statement]
-
 				transformedStatements.push(
 					expressionStatement(
 						callExpression(
 							memberExpression(
-								callExpression(identifier("expect"), [rtlQuery]),
-								identifier("toBeDisabled"),
+								callExpression(identifier("expect"), [
+									callExpression(identifier("asFragment"), []),
+								]),
+								identifier("toMatchSnapshot"),
 							),
 							[],
 						),

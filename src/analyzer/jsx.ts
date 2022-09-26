@@ -1,4 +1,5 @@
 import {
+	Identifier,
 	JSXAttribute,
 	JSXElement,
 	JSXExpressionContainer,
@@ -20,12 +21,14 @@ interface ReactComponentDefinition {
 
 interface ReactComponent {
 	name: string
-	role: string
+	label: string | null
+	role: string | null
 	jsx: JSXElement
 }
 
 const roles: Record<string, string> = {
 	Button: "button",
+	IconButton: "button",
 }
 
 function findReactComponentByName(
@@ -102,51 +105,65 @@ function findByLabelText(
 ): ReactComponent | null {
 	for (const node of walkJsx(root)) {
 		if (node.type === "JSXElement") {
-			const ariaLabelProp = node.openingElement.attributes.find(
-				(prop): prop is JSXAttribute =>
-					prop.type === "JSXAttribute" &&
-					prop.name.type === "JSXIdentifier" &&
-					prop.name.name === "aria-label",
+			const info = extractJSXElementInfo(node)
+			if (
+				info &&
+				info.label &&
+				(info.label.includes(labelText) || labelText.includes(info.label))
 			)
-			if (ariaLabelProp) {
-				let isMatch = false
-				switch (ariaLabelProp.value?.type) {
-					case "StringLiteral":
-						if (
-							ariaLabelProp.value.value.includes(labelText) ||
-							labelText.includes(ariaLabelProp.value.value)
-						) {
-							isMatch = true
-						}
-						break
-
-					case "JSXExpressionContainer":
-						const expression = ariaLabelProp.value.expression
-						if (expression.type === "TemplateLiteral") {
-							const partialString = templateLiteralToString(expression)
-							if (
-								partialString.includes(labelText) ||
-								labelText.includes(partialString)
-							) {
-								isMatch = true
-							}
-						}
-						break
-				}
-
-				if (!isMatch) continue
-
-				const componentName = (node.openingElement.name as JSXIdentifier).name
-
-				return {
-					name: componentName,
-					role: roles[componentName]!!,
-					jsx: node,
-				}
-			}
+				return info
 		}
 	}
 	return null
+}
+
+function findByComponent(
+	componentIdentifier: Identifier,
+	root: JSXElement | JSXFragment,
+) {
+	for (const node of walkJsx(root)) {
+		if (
+			node.type === "JSXElement" &&
+			node.openingElement.name.type === "JSXIdentifier" &&
+			node.openingElement.name.name === componentIdentifier.name
+		) {
+			return node
+		}
+	}
+	return null
+}
+
+function extractJSXElementInfo(element: JSXElement): ReactComponent | null {
+	const ariaLabelProp = element.openingElement.attributes.find(
+		(prop): prop is JSXAttribute =>
+			prop.type === "JSXAttribute" &&
+			prop.name.type === "JSXIdentifier" &&
+			prop.name.name === "aria-label",
+	)
+	if (!ariaLabelProp) return null
+
+	let ariaLabel: string | null = null
+	switch (ariaLabelProp.value?.type) {
+		case "StringLiteral":
+			ariaLabel = ariaLabelProp.value.value
+			break
+
+		case "JSXExpressionContainer":
+			const expression = ariaLabelProp.value.expression
+			if (expression.type === "TemplateLiteral") {
+				ariaLabel = templateLiteralToString(expression)
+			}
+			break
+	}
+
+	const componentName = (element.openingElement.name as JSXIdentifier).name
+
+	return {
+		label: ariaLabel,
+		role: roles[componentName] ?? null,
+		name: componentName,
+		jsx: element,
+	}
 }
 
 export { walkJsx, findReactComponentByName, findByLabelText }

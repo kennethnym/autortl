@@ -24,6 +24,7 @@ import {
 import { extractArrowFunctionDeclaration } from "../analyzer/ast"
 import { transformTestCase } from "./test-case"
 import { ReactComponentDefinition } from "../analyzer/jsx"
+import { extractTestCase } from "../analyzer/jest"
 
 const letUserEvent = variableDeclaration("let", [
 	variableDeclarator(
@@ -74,7 +75,10 @@ function transformTestSuite(
 							case "beforeEach":
 								return transformBeforeEach(statement) ?? statement
 							case "it":
-								return transformTestCase(statement, testTarget)
+								const testCase = extractTestCase(statement)
+								return testCase
+									? transformTestCase(testCase, testTarget)
+									: statement
 							default:
 								return statement
 						}

@@ -78,7 +78,7 @@ function transformEnzymeFind(
 
 			const selectedComponent = findByLabelText(ariaLabel, testTarget.jsx)
 
-			return selectedComponent
+			return selectedComponent && selectedComponent.role
 				? awaitExpression(
 						callExpression(
 							memberExpression(identifier("screen"), identifier("findByRole")),

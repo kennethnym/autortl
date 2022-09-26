@@ -1,6 +1,7 @@
 import { ExpressionStatement, Statement } from "@babel/types"
 
 interface TestCase {
+	testName: string
 	statement: ExpressionStatement
 	body: Statement[]
 }
@@ -18,9 +19,11 @@ function extractTestCase(statement: Statement): TestCase | null {
 	}
 
 	return {
+		testName: statement.expression.arguments[0].value,
 		statement,
 		body: statement.expression.arguments[1].body.body,
 	}
 }
 
 export { extractTestCase }
+export type { TestCase }
