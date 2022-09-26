@@ -1,6 +1,7 @@
 import {
 	arrowFunctionExpression,
 	ArrowFunctionExpression,
+	assignmentExpression,
 	blockStatement,
 	BlockStatement,
 	callExpression,
@@ -10,9 +11,9 @@ import {
 	functionDeclaration,
 	FunctionDeclaration,
 	identifier,
+	memberExpression,
 	returnStatement,
 	ReturnStatement,
-	Statement,
 	tSTypeAnnotation,
 	tsTypeAnnotation,
 	tSTypeReference,
@@ -21,7 +22,6 @@ import {
 	variableDeclarator,
 } from "@babel/types"
 import { extractArrowFunctionDeclaration } from "../analyzer/ast"
-import { extractTestCase } from "../analyzer/jest"
 import { transformTestCase } from "./test-case"
 import { ReactComponentDefinition } from "../analyzer/jsx"
 
@@ -45,38 +45,89 @@ function transformTestSuite(
 	const suiteBody = (expression.arguments[1] as ArrowFunctionExpression)
 		.body as BlockStatement
 
-	const transformed = suiteBody.body.reduce<Statement[]>(
-		(statements, statement) => {
-			const arrowFunction = extractArrowFunctionDeclaration(statement)
-			if (arrowFunction) {
-				switch (arrowFunction.name) {
-					case "createWrapper":
-						statements.push(
-							generateRenderComponentFunction(arrowFunction.expression),
-						)
-						return statements
+	const transformed = suiteBody.body.flatMap((statement) => {
+		switch (statement.type) {
+			case "VariableDeclaration":
+				const arrowFunction = extractArrowFunctionDeclaration(statement)
+				if (arrowFunction) {
+					switch (arrowFunction.name) {
+						case "createWrapper":
+							return generateRenderComponentFunction(arrowFunction.expression)
 
-					case "createRTLWrapper":
-						return statements
+						case "createRTLWrapper":
+							return []
+
+						default:
+							return statement
+					}
 				}
-			}
 
-			const testCase = extractTestCase(statement)
-			if (testCase) {
-				statements.push(transformTestCase(testCase.statement, testTarget))
-				return statements
-			}
+				return statement
 
-			statements.push(statement)
-			return statements
-		},
-		[letUserEvent],
-	)
+			case "ExpressionStatement":
+				switch (statement.expression.type) {
+					case "CallExpression":
+						const callee = statement.expression.callee
+						if (callee.type !== "Identifier") return statement
+
+						switch (callee.name) {
+							case "beforeEach":
+								return transformBeforeEach(statement) ?? statement
+							case "it":
+								return transformTestCase(statement, testTarget)
+							default:
+								return statement
+						}
+
+					default:
+						return statement
+				}
+
+			default:
+				return statement
+		}
+	})
 
 	return expressionStatement(
 		callExpression(expression.callee, [
 			expression.arguments[0],
-			arrowFunctionExpression([], blockStatement(transformed)),
+			arrowFunctionExpression(
+				[],
+				blockStatement([letUserEvent, ...transformed]),
+			),
+		]),
+	)
+}
+
+function transformBeforeEach(
+	statement: ExpressionStatement,
+): ExpressionStatement | null {
+	if (statement.expression.type !== "CallExpression") return null
+
+	const beforeEachCallback = statement.expression.arguments[0]
+	if (
+		!beforeEachCallback ||
+		beforeEachCallback.type !== "ArrowFunctionExpression" ||
+		beforeEachCallback.body.type !== "BlockStatement"
+	) {
+		return null
+	}
+
+	const userEventInit = expressionStatement(
+		assignmentExpression(
+			"=",
+			identifier("user"),
+			callExpression(
+				memberExpression(identifier("userEvent"), identifier("setup")),
+				[],
+			),
+		),
+	)
+	const beforeEachBody = [userEventInit, ...beforeEachCallback.body.body]
+
+	return expressionStatement(
+		callExpression(statement.expression.callee, [
+			arrowFunctionExpression([], blockStatement(beforeEachBody)),
 		]),
 	)
 }
